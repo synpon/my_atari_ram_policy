@@ -5,8 +5,6 @@ from rl import Serializable
 from categorical import cat_sample, cat_entropy
 from ppo import PPOPolicy
 
-sess = tf.InteractiveSession()
-
 
 def weight_variable(shape, stddev=0.1, initial=None):
     if initial is None:
