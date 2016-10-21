@@ -23,24 +23,16 @@ class AtariRAMPolicy(PPOPolicy, Serializable):
         n_hid = 64
 
         # Observations placeholder. batch_size samples with 128 features.
-        o_no = tf.placeholder(tf.float32, shape=[None, n_in])
-        a_n = tf.placeholder(tf.int8, shape=[None])
-        q_n = tf.placeholder(tf.float32, shape=[None])
-        oldpdist_np = tf.placeholder(tf.float32, shape=[None, n_actions])
-        lam = tf.placeholder(tf.float32, shape=[1])
+        self.o_no = tf.placeholder(tf.float32, shape=[None, n_in])
+        self.a_n = tf.placeholder(tf.int8, shape=[None])
+        self.q_n = tf.placeholder(tf.float32, shape=[None])
+        self.oldpdist_np = tf.placeholder(tf.float32, shape=[None, n_actions])
+        self.lam = tf.placeholder(tf.float32, shape=[1])
 
         # Now tack them to self so we can talk about them to feed_dict.
-        self.o_no = o_no
-        self.a_n = a_n
-        self.q_n = q_n
-        self.oldpdist_np = oldpdist_np
-        self.lam = lam
-        # Store the batch size to self.
-        self.batch_size = a_n.get_shape().as_list()[0]
         self.n_in = n_in
         self.n_hid = n_hid
         self.n_actions = n_actions
-        batch_size = self.batch_size
 
         # Normalize observations.
         h0 = tf.div(tf.sub(self.o_no, 128.0), 128.0)
@@ -63,7 +55,8 @@ class AtariRAMPolicy(PPOPolicy, Serializable):
 
         # Gather from a flattened version of the matrix since gather_nd does
         # not work on the gpu at this time.
-        idx_flattened = tf.range(0, batch_size) * n_actions + tf.cast(self.a_n, tf.int32)
+        self.batch_size = logprobs_na.get_shape().as_list()[0]
+        idx_flattened = tf.range(0, self.batch_size) * n_actions + tf.cast(self.a_n, tf.int32)
 
         # The modeled log probability of the choice taken for whole batch.
         logps_n = tf.gather(tf.reshape(logprobs_na, [-1]), idx_flattened)
@@ -80,7 +73,7 @@ class AtariRAMPolicy(PPOPolicy, Serializable):
                 tf.mul(self.oldpdist_np, tf.log(tf.div(self.oldpdist_np, probs_na))), 1))
 
         # Ultimate objective function for constrained optimization.
-        penobj = tf.sub(surr, tf.mul(lam, kl))
+        penobj = tf.sub(surr, tf.mul(self.lam, kl))
 
         # Compute gradients of KLD-constrained objective function.
         penobj_grads = tf.gradients(penobj, [self.W_01, self.W_12, self.b_01, self.b_12])
@@ -93,10 +86,9 @@ class AtariRAMPolicy(PPOPolicy, Serializable):
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.initialize_all_variables())
 
-
     def step(self, X):
         feed_dict={
-            self.o_no : X
+            self.o_no : X,
         }
         pdist_na = self.sess.run(self.f_probs,feed_dict=feed_dict)
         # pdist_na = self.f_probs(X)
@@ -108,7 +100,7 @@ class AtariRAMPolicy(PPOPolicy, Serializable):
 
     def compute_gradient(self, pdist_np, o_no, a_n, q_n):
         feed_dict={
-            self.pdist_np : pdist_np,
+            self.oldpdist_np : pdist_np,
             self.o_no : o_no,
             self.a_n : a_n,
             self.q_n : q_n
@@ -118,7 +110,7 @@ class AtariRAMPolicy(PPOPolicy, Serializable):
 
     def compute_surr_kl(self, pdist_np, o_no, a_n, q_n):
         feed_dict={
-            self.pdist_np : pdist_np,
+            self.oldpdist_np : pdist_np,
             self.o_no : o_no,
             self.a_n : a_n,
             self.q_n : q_n
@@ -129,7 +121,7 @@ class AtariRAMPolicy(PPOPolicy, Serializable):
     def compute_grad_lagrangian(self, lam, pdist_np, o_no, a_n, q_n):
         feed_dict={
             self.lam : lam,
-            self.pdist_np : pdist_np,
+            self.oldpdist_np : pdist_np,
             self.o_no : o_no,
             self.a_n : a_n,
             self.q_n : q_n
