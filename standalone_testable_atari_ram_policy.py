@@ -93,18 +93,19 @@ class AtariRAMPolicy(object):
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.initialize_all_variables())
 
+
     def step(self, X):
         feed_dict={
             self.o_no : X,
         }
-        pdist_na = self.sess.run(self.f_probs,feed_dict=feed_dict)
+        pdist_na = self.sess.run(self.probs_na,feed_dict=feed_dict)
         # pdist_na = self.f_probs(X)
-        acts_n = cat_sample(pdist_na)
         return {
-            "action" : acts_n,
             "pdist" : pdist_na
         }
-
+    ###########################################################################
+    ### Helper methods to compute gradients and objective function values.  ###
+    ###########################################################################
     def compute_gradient(self, pdist_np, o_no, a_n, q_n):
         feed_dict={
             self.oldpdist_np : pdist_np,
@@ -137,10 +138,12 @@ class AtariRAMPolicy(object):
         [penobj_grads] = self.sess.run([self.penobj_grads], feed_dict=feed_dict)
         return np.concatenate([p.flatten() for p in penobj_grads],0)
 
-
     def compute_entropy(self, pdist_np):
-        return cat_entropy(pdist_np)
+        raise NotImplementedError
 
+    ###########################################################################
+    ###                Get and Set parameters for the model                 ###
+    ###########################################################################
     def get_parameters_flat(self):
         W_01 = self.sess.run(self.W_01)
         W_12 = self.sess.run(self.W_12)
@@ -162,8 +165,10 @@ class AtariRAMPolicy(object):
         self.sess.run(tf.assign(self.b_01, b_01))
         self.sess.run(tf.assign(self.b_12, b_12))
 
+    # def set_n_batch(self, n_batch):
+    #     self.sess.run(tf.assign(self.n_batch, n_batch))
 
-def test_AtariRAMPolicy():
+def test():
     """
     Test the model using some fake data.
     """
@@ -214,4 +219,4 @@ def test_AtariRAMPolicy():
 
 
 if __name__ == "__main__":
-    test_AtariRAMPolicy()
+    test()
