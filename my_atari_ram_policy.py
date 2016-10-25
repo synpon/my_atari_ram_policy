@@ -153,13 +153,17 @@ class AtariRAMPolicy(object):
 
     def set_parameters_flat(self, th):
         self.sess.run(tf.initialize_all_variables())
+        # Get shape of parameters from the class.
         n_in = self.n_in
         n_hid = self.n_hid
         n_actions = self.n_actions
+        # Grab and reshape weight matrices.
         W_01 = th[:n_hid*n_in].reshape(n_in,n_hid)
         W_12 = th[n_hid*n_in:n_hid*n_in+n_hid*n_actions].reshape(n_hid,n_actions)
+        # Pull the biases off the end of th.
         b_01 = th[-n_hid-n_actions:-n_actions]
         b_12 = th[-n_actions:]
+        # Assign the variables the values passed through th.
         self.sess.run(tf.assign(self.W_01, W_01))
         self.sess.run(tf.assign(self.W_12, W_12))
         self.sess.run(tf.assign(self.b_01, b_01))
@@ -221,28 +225,34 @@ def test_AtariRAMPolicy():
     th_new = policy.get_parameters_flat()
     assert not np.any(th_new - theta)
 
-    def fpen(th): #, probs_na, obs, a_n, q_n):
+    # We define a new function in test_AtariRAMPolicy() so we can hand in the
+    # data needed and leave the parameters of the model as the only input.
+    def fpen(th):
         thprev = policy.get_parameters_flat()
         policy.set_parameters_flat(th)
-        surr, kl = policy.compute_surr_kl(*poar_train)#probs_na, obs, a_n, q_n)
+        surr, kl = policy.compute_surr_kl(*poar_train)
         out = penalty_coeff * kl - surr
         policy.set_parameters_flat(thprev)
         return out
 
-    print(fpen(theta))#, probs_na, obs, a_n, q_n))
-    def fgradpen(th): #, probs_na, obs, a_n, q_n):
+    # Quick check it works.
+    fpen(theta)
+
+    # Do the same thing for the gradient of fpen.
+    def fgradpen(th):
         thprev = policy.get_parameters_flat()
         policy.set_parameters_flat(th)
-        out = - policy.compute_grad_lagrangian(penalty_coeff, *poar_train) #probs_na, obs, a_n, q_n)
+        out = - policy.compute_grad_lagrangian(penalty_coeff, *poar_train)
         policy.set_parameters_flat(thprev)
         return out
-    print(fgradpen(theta)) #, probs_na, obs, a_n, q_n).shape)
 
-    # opt.check_grad(fpen, fgradpen, theta)
-    # eps = np.sqrt(np.finfo(float).eps)
-    # opt.approx_fprime(theta, fpen, eps)
+    # Testing fgradpen()
+    fgradpen(theta)
+
+    # Test out our functions in the context of lbfgs-b minimization with scipy.
     res = opt.fmin_l_bfgs_b(fpen, theta, fprime=fgradpen, maxiter=20)
-    # res = opt.fmin_cg(fpen, theta, maxiter=20, fprime=fgradpen)
+
+    print(res)
 
 if __name__ == "__main__":
     test_AtariRAMPolicy()
