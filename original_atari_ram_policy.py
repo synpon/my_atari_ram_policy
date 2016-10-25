@@ -33,6 +33,7 @@ class AtariRAMPolicy(PPOPolicy, Serializable):
         kl = (oldpdist_np * cgt.log(oldpdist_np/probs_na)).sum(axis=1).mean()
 
         params = nn.get_parameters(surr)
+        print params
         gradsurr = cgt.grad(surr, params)
         flatgrad = cgt.concatenate([p.flatten() for p in gradsurr])
 

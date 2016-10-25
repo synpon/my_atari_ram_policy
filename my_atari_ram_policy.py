@@ -2,16 +2,17 @@ from __future__ import print_function
 
 import tensorflow as tf
 import numpy as np
+import scipy.optimize as opt
 
 # Helper functions.
 def weight_variable(shape, stddev=0.1, initial=None):
     if initial is None:
-        initial = tf.truncated_normal(shape, stddev=stddev)
+        initial = tf.truncated_normal(shape, stddev=stddev,dtype=tf.float64)
     return tf.Variable(initial)
 
 def bias_variable(shape, init_bias=0.1,initial=None):
     if initial is None:
-        initial = tf.constant(init_bias, shape=shape)
+        initial = tf.constant(init_bias, shape=shape,dtype=tf.float64)
     return tf.Variable(initial)
 
 class AtariRAMPolicy(object):
@@ -20,20 +21,23 @@ class AtariRAMPolicy(object):
     adapted from cgt version in cs294 @ http://rll.berkeley.edu/deeprlcourse/
     """
     def __init__(self, n_actions):
+
         n_in = 128
         n_hid = 64
 
+        # Attach placeholders to self so they're in the scope of the feed_dict
+        # and sess.run() for later functions that use the model.
 
         # Observations placeholder. batch_size samples with 128 features.
-        self.o_no = tf.placeholder(tf.float32, shape=[None, n_in])
+        self.o_no = tf.placeholder(tf.float64, shape=[None, n_in])
         # Actions
         self.a_n = tf.placeholder(tf.int8, shape=[None])
         # Rewards
-        self.q_n = tf.placeholder(tf.float32, shape=[None])
+        self.q_n = tf.placeholder(tf.float64, shape=[None])
         # Previous transition probability distribution.
-        self.oldpdist_np = tf.placeholder(tf.float32, shape=[None, n_actions])
+        self.oldpdist_np = tf.placeholder(tf.float64, shape=[None, n_actions])
         # Relative importance of Kullback-Liebler Divergence to ultimate objective.
-        self.lam = tf.placeholder(tf.float32)
+        self.lam = tf.placeholder(tf.float64)
 
 
         # Tack network dimensions to self so we can talk about them when
@@ -61,13 +65,12 @@ class AtariRAMPolicy(object):
 
         logprobs_na = tf.log(self.probs_na)
 
-        # This should work, but doesn't.
-        self.n_batch = tf.shape(self.a_n)[0]
-        # This does work, but doesn't work from the perspective
+        # This works.
+        n_batch = tf.shape(self.a_n)[0]
 
         # Gather from a flattened version of the matrix since gather_nd does
         # not work on the gpu at this time.
-        idx_flattened = tf.range(0, self.n_batch) * n_actions + tf.cast(self.a_n, tf.int32)
+        idx_flattened = tf.range(0, n_batch) * n_actions + tf.cast(self.a_n, tf.int32)
 
         # The modeled log probability of the choice taken for whole batch.
         logps_n = tf.gather(tf.reshape(logprobs_na, [-1]), idx_flattened)
@@ -93,15 +96,15 @@ class AtariRAMPolicy(object):
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.initialize_all_variables())
 
+
     def step(self, X):
         feed_dict={
             self.o_no : X,
         }
-        pdist_na = self.sess.run(self.f_probs,feed_dict=feed_dict)
-        # pdist_na = self.f_probs(X)
-        acts_n = cat_sample(pdist_na)
+        pdist_na = self.sess.run(self.probs_na,feed_dict=feed_dict)
+        # acts_n = cat_sample(pdist_na)
         return {
-            "action" : acts_n,
+            # "action" : acts_n,
             "pdist" : pdist_na
         }
 
@@ -114,7 +117,6 @@ class AtariRAMPolicy(object):
         }
         [surr_grads] = self.sess.run([self.surr_grads],feed_dict=feed_dict)
         return np.concatenate([p.flatten() for p in surr_grads],0)
-        # return surr_grads
 
     def compute_surr_kl(self, pdist_np, o_no, a_n, q_n):
         feed_dict={
@@ -139,7 +141,8 @@ class AtariRAMPolicy(object):
 
 
     def compute_entropy(self, pdist_np):
-        return cat_entropy(pdist_np)
+        # return cat_entropy(pdist_np)
+        assert NotImplementedError
 
     def get_parameters_flat(self):
         W_01 = self.sess.run(self.W_01)
@@ -163,6 +166,7 @@ class AtariRAMPolicy(object):
         self.sess.run(tf.assign(self.b_12, b_12))
 
 
+
 def test_AtariRAMPolicy():
     """
     Test the model using some fake data.
@@ -172,6 +176,7 @@ def test_AtariRAMPolicy():
     n_features = 128
     n_actions = 9
     lam = 1.0
+    penalty_coeff = 1.0
 
     # Go ahead and initialize the policy.
     policy = AtariRAMPolicy(n_actions=n_actions)
@@ -187,16 +192,22 @@ def test_AtariRAMPolicy():
 
     # Now for some tests.
 
-    # # Test set_n_batch()
-    # policy.set_n_batch(n_batch)
-    # print(policy.n_batch)
+    n_train_paths = int(0.75 * n_batch)
 
+    train_sli = slice(0, n_train_paths)
+    test_sli = slice(train_sli.stop, None)
+
+    poar_train, poar_test = [tuple(arr[sli] for arr in (probs_na, obs, a_n, q_n)) for sli in (train_sli, test_sli)]
+    print(len(poar_train))
+    print(type(poar_train))
     # testing get_parameters_flat()
-    th = policy.get_parameters_flat() + 1.
+    theta = policy.get_parameters_flat()
     #
     # testing set_parameters_flat()
-    policy.set_parameters_flat(th)
+    policy.set_parameters_flat(theta)
 
+    # testing step()
+    policy.step(obs)
     # testing compute_gradient()
     policy.compute_gradient(probs_na, obs, a_n, q_n)
 
@@ -208,10 +219,30 @@ def test_AtariRAMPolicy():
 
     # Make sure we still have the same parameters
     th_new = policy.get_parameters_flat()
+    assert not np.any(th_new - theta)
 
-    # assert not np.any(th_new - th)
-    print(th_new - th)
+    def fpen(th): #, probs_na, obs, a_n, q_n):
+        thprev = policy.get_parameters_flat()
+        policy.set_parameters_flat(th)
+        surr, kl = policy.compute_surr_kl(*poar_train)#probs_na, obs, a_n, q_n)
+        out = penalty_coeff * kl - surr
+        policy.set_parameters_flat(thprev)
+        return out
 
+    print(fpen(theta))#, probs_na, obs, a_n, q_n))
+    def fgradpen(th): #, probs_na, obs, a_n, q_n):
+        thprev = policy.get_parameters_flat()
+        policy.set_parameters_flat(th)
+        out = - policy.compute_grad_lagrangian(penalty_coeff, *poar_train) #probs_na, obs, a_n, q_n)
+        policy.set_parameters_flat(thprev)
+        return out
+    print(fgradpen(theta)) #, probs_na, obs, a_n, q_n).shape)
+
+    # opt.check_grad(fpen, fgradpen, theta)
+    # eps = np.sqrt(np.finfo(float).eps)
+    # opt.approx_fprime(theta, fpen, eps)
+    res = opt.fmin_l_bfgs_b(fpen, theta, fprime=fgradpen, maxiter=20)
+    # res = opt.fmin_cg(fpen, theta, maxiter=20, fprime=fgradpen)
 
 if __name__ == "__main__":
     test_AtariRAMPolicy()
